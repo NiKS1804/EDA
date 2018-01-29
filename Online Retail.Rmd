@@ -1,0 +1,525 @@
+---
+title: "Online_Retail"
+author: "Nitish, Shinjini, Sambit"
+date: "30 December 2017"
+output: html_document
+---
+
+#Data Set Information:
+
+This is a transnational data set which contains all the transactions occurring between 01/12/2010 and 09/12/2011 for a UK-based and registered non-store online retail.The company mainly sells unique all-occasion gifts. Many customers of the company are wholesalers.
+
+## Loading necessary libraries
+```{r,echo=FALSE}
+library(readxl)
+library(knitr)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+
+
+```
+
+
+##Import the Dataset
+### A look at the dataset we're working on
+```{r}
+
+retail=readxl::read_xlsx("C://Users//Administrator//Desktop//project//Online Retail.xlsx")
+h=head(retail,10)
+kable(h)
+```
+
+##Structure of Data and NA's
+```{r}
+str(retail)
+
+apply(retail, 2, function(x) sum(is.na(x)*100/length(x)))
+```
+
+#Date and Time
+```{r,echo=F}
+retail1 = retail
+
+retail1$InvoiceTime <-format(as.POSIXct(strptime(retail1$InvoiceDate,"%Y-%m-%d %H:%M:%S",tz="")) ,format = "%H:%M:%S")
+
+
+
+retail1$InvoiceDate= format(as.Date(retail1$InvoiceDate,format="%Y-%m-%d %H:%M:%S"), "%Y/%m/%d")
+kable(retail1[1:10,])
+```
+
+## Checking for items which are cancelled or returned
+- Items starting with 'C' in invoice number are cancelled items
+-- Subset for cancelled products
+
+```{r,echo=F}
+retail1$item.return = grepl("C", retail1$InvoiceNo, fixed = TRUE)
+View(retail1)
+
+cancelled_products = filter(retail1, retail1$item.return == 'TRUE')
+
+```
+
+#Changing the quantity which are negative for items that are not returned
+```{r}
+retail1$Quantity=if_else(retail1$item.return==FALSE & retail1$Quantity < 0, -1*retail1$Quantity, retail1$Quantity)
+```
+
+# Changing negative Unit Price to Positive
+```{r}
+retail1$UnitPrice = if_else(retail1$UnitPrice < 0, -1*retail1$UnitPrice, retail1$UnitPrice)
+#range(retail1$UnitPrice)
+```
+# Creating 'Sales' column from the given 'Quantity' and 'Unit Price' columns(ie Sales = qty*unit_price)
+```{r}
+retail1$Sales = retail1$Quantity * retail1$UnitPrice
+```
+
+#Descriptive Analysis
+
+##1. Summary
+```{r,echo=F}
+summary(retail1)
+
+std=sd(retail1$Sales) #standard deviation of Sale
+std
+
+library(sciplot)
+standard.error=se(retail1$Sales)  
+#Standard Error 
+
+```
+
+#OUTLIERS TREATMENT ALONG WITH SKEWNESS & KURTOSIS
+- In statistics, an outlier is defined as an observation which stands far away from the most of other observations. Often an outlier is present due to the measurements error. Therefore, one of the most important tasks in data analysis is to identify and only if it is necessary to remove the outlier.
+- Skewness is the measurement of how the data is distributed. To check the symmetry of the data distribution
+- Intuitively, the kurtosis describes the tail shape of the data distribution. The normal distribution has zero kurtosis and thus the standard tail shape. It is said to be mesokurtic. Negative kurtosis would indicate a thin-tailed data distribution, and is said to be platykurtic. Positive kurtosis would indicate a fat-tailed distribution, and is said to be leptokurtic.
+
+#Function to identify Outliers
+
+```{r,echo=F}
+library(moments)
+library(e1071) 
+
+outlierfn <- function(dt, var) {
+  var_name <- eval(substitute(var),eval(dt))
+  tot <- sum(!is.na(var_name))
+  na1 <- sum(is.na(var_name))
+  m1 <- mean(var_name, na.rm = T)
+  s1= skewness(var_name, na.rm = T)
+  k1=kurtosis(var_name,na.rm=T)
+  
+  par(mfrow=c(2, 2), oma=c(0,0,3,0))
+  boxplot(var_name, main="With outliers")
+  hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+  outlier <- boxplot.stats(var_name)$out
+  mo <- mean(outlier)
+  so= skewness(outlier)
+  ko=kurtosis(outlier)
+  
+  var_name <- ifelse(var_name %in% outlier, NA, var_name)
+  boxplot(var_name, main="Without outliers")
+  hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+  title("Outlier Check", outer=TRUE)
+  na2 <- sum(is.na(var_name))
+  message("Outliers identified: ", na2 - na1, " from ", tot, " observations")
+  message("Proportion (%) of outliers: ", (na2 - na1) / tot*100)
+  message("Mean of the outliers: ", mo)
+  message("Skewness of the outliers: ", so)
+  message("Kurtosis of the outliers :", ko)
+  
+  k2=kurtosis(var_name,na.rm=T)
+  s2 <- skewness(var_name, na.rm = T)
+  m2 <- mean(var_name, na.rm = T)
+  message("Mean without removing outliers: ", m1)
+  message("Mean if we remove outliers: ", m2)
+  message("Skewness without removing outliers: ", s1)
+   message("Skewness if we remove outliers: ", s2)
+   message("Kurtosis without removing outliers: ", k1)
+   message("Kurtosis if we remove outliers: ", k2)
+
+   }
+
+```
+
+
+```{r,message=F,cache=F}
+outlierfn(retail1,Sales) #Calling the function
+```
+
+# Analysis for different products
+### 1.Top 5 selling items by overall sales
+```{r,echo=F}
+library(dplyr)
+data= retail1
+max_selling_item = data%>%group_by(StockCode,Description)%>%summarise(Total_Sales=sum(Sales))%>%arrange(-Total_Sales)
+top_5_items_by_sales = head(max_selling_item,5)
+top_5_items_by_sales
+
+
+library(ggplot2)
+ggplot(top_5_items_by_sales,aes(x=reorder(StockCode,-Total_Sales),y=Total_Sales))+geom_bar(stat="identity",aes(fill=Description))+theme_dark()+labs(x="StockCode",y="Total Sale",title="Top 5 selling Items By Total Sales")+scale_fill_brewer(palette="Accent")  + theme_bw()
+
+
+```
+
+
+###2.Average Sales
+```{r,echo=F}
+library(dplyr)
+library(ggplot2)
+avg_sale = data %>% group_by(StockCode,Description) %>% summarise(Avg_Sale = mean(Sales)) %>%arrange(-Avg_Sale)
+meanSales=head(avg_sale)
+ ggplot(meanSales,aes(x=reorder(StockCode,-Avg_Sale),y=Avg_Sale))+geom_bar(stat="identity",aes(fill=Description))+theme_dark()+labs(x="StockCode",y="Average Sale",title="Top selling Items By Average Sales") +
+    scale_fill_brewer(palette="Set3") +theme_bw()
+
+```
+
+### 3.Top 5 selling items by quantities sold
+```{r,echo=F}
+max_quant_selling = data %>% group_by(StockCode,Description) %>% summarise(Total_Qty = sum(Quantity)) %>% arrange(-Total_Qty)
+top_5_items_by_qty = head(max_quant_selling,5)
+
+ggplot(top_5_items_by_qty,aes(x=reorder(StockCode,-Total_Qty),y=Total_Qty))+geom_bar(stat="identity",aes(fill=Description))+theme_dark()+labs(x="StockCode",y="Total_Qty",title="Top selling Items By Total Quantity")+
+    scale_fill_brewer(palette="Set1") +theme_bw()
+```
+
+## subset for cancelled products
+- Here we filtered those products where the Invoice number started with 'C'(c - denotes cancelled items)
+
+### Top 5 cancelled/returned items(by overall Sales value)
+```{r,echo=F}
+# Products returned Sales Value wise
+cancelled_products$Sales = cancelled_products$Quantity*cancelled_products$UnitPrice
+top_items_ret = cancelled_products %>% group_by(StockCode,Description) %>% summarise(totalsales=sum(Sales))%>% arrange(totalsales)
+top_5_items_ret = head(top_items_ret,5)
+top_5_items_ret
+
+ggplot(top_5_items_ret,aes(x=StockCode,y=-1*totalsales))+geom_bar(stat = "identity",aes(fill=Description))+ labs(x="StockCode",y="Loss In Sale",title="Top 5 Returned Items Sale Wise") +theme_bw()
+```
+# products returned quantity wise
+```{r,echo=F}
+top_items_ret = cancelled_products %>% group_by(StockCode,Description) %>% summarise(totalquantity=sum(Quantity))%>% arrange(totalquantity)
+top_5_items_ret = head(top_items_ret,5)
+top_5_items_ret
+
+ggplot(top_5_items_ret,aes(x=StockCode,y=-1*totalquantity))+geom_bar(stat = "identity",aes(fill=Description))+ labs(x="StockCode",y="Quantity Returned",title="Top 5 Returned Items Quantity Wise") +theme_bw()
+```
+
+
+
+# COUNTRY WISE SALES
+```{r}
+country_sales = retail1 %>% group_by(Country) %>% summarise(totalsales=sum(Sales)) %>% arrange(-totalsales)
+#country_sales
+# country wise return
+country_return = cancelled_products %>% group_by(Country) %>% summarise(totalreturn=sum(Sales)) %>% arrange(totalreturn)
+#country_return
+country_total = merge(country_sales,country_return)
+#country_total
+
+country_total$buisness = country_total$totalsales + country_total$totalreturn 
+country_total = country_total %>% arrange(-buisness)
+library(reshape2)
+knitr::kable(x = country_total)
+c1=reshape2::melt(country_total[,1:3],id="Country")%>%arrange(Country)
+
+
+p1=ggplot(c1[1:10,],aes(x=Country,y=value))+geom_bar(stat="identity",aes(fill=variable)) +theme_bw()
+
+p2=ggplot(c1[11:20,],aes(x=Country,y=value))+geom_bar(stat="identity",aes(fill=variable)) +theme_bw()
+
+p3=ggplot(c1[20:30,],aes(x=Country,y=value))+geom_bar(stat="identity",aes(fill=variable)) +theme_bw()
+
+p4=ggplot(c1[40:50,],aes(x=Country,y=value))+geom_bar(stat="identity",aes(fill=variable))+theme_bw()
+
+p5=ggplot(c1[50:60,],aes(x=Country,y=value))+geom_bar(stat="identity",aes(fill=variable))+theme_bw()
+
+p1
+p2
+p3
+p4
+p5
+```
+
+###3.Maximum Sale Day Wise
+```{r,echo=F}
+require(quantmod)
+require(ggplot2)
+require(reshape2)
+require(scales)
+library(zoo)
+# We will facet by year ~ month, and each subgraph will show week-of-month versus weekday
+#the year is simple
+data$InvoiceDate=as.Date(data$InvoiceDate)
+data$InvoiceYear=as.numeric(format(data$InvoiceDate,'%Y'))
+
+#extract month
+library(lubridate)
+data$InvoiceMonth<-month(data$InvoiceDate)
+#Change the numbers into factors
+data$InvoiceMonth<-factor(data$InvoiceMonth,levels=as.character(1:12),labels=c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"),ordered=TRUE)
+# the monthweek part is a bit trickier 
+# first a factor which cuts the data into month chunks
+data$yearmonth<-as.yearmon(data$InvoiceDate)
+data$yearmonthf<-factor(data$yearmonth)
+
+# then find the "week of year" for each day
+data$week <- as.numeric(format(data$InvoiceDate,"%W"))
+# and now for each monthblock we normalize the week to start at 1 
+data<-plyr::ddply(data,.(yearmonthf),transform,monthweek=1+week-min(week))
+
+# the day of week is again easily found
+data$weekday = as.POSIXlt(data$InvoiceDate)$wday
+data$weekdayf<-factor(data$weekday,levels=0:6,labels=c("Sun","Mon","Tue","Wed","Thu","Fri","Sat"),ordered=TRUE)
+
+
+```
+```{r}
+#Converting InvoiceTime Column from Character to Time
+
+library(chron)
+data$InvoiceTime=chron(times. = data$InvoiceTime)
+
+```
+###Top Selling Item in a Month 
+```{r,echo=F}
+t2=data%>%dplyr::group_by(InvoiceMonth,Description)%>%dplyr::summarise(TotalSales=sum(Sales))%>%arrange(InvoiceMonth,-TotalSales)
+
+t3= head(filter(t2,InvoiceMonth=="Jan")%>%arrange(-TotalSales),5)%>%bind_rows(head(filter(t2,InvoiceMonth=="Feb")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Mar")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Apr")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="May")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Jun")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Jul")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Aug")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Sep")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Oct")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Nov")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Dec")))
+
+
+g1=ggplot(t3[1:5,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in January")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g2=ggplot(t3[6:10,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in February")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g3=ggplot(t3[11:15,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in March")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g4=ggplot(t3[16:20,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in April")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g5=ggplot(t3[21:25,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in May")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g6=ggplot(t3[26:30,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in June")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+g7=ggplot(t3[31:35,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in July")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g8=ggplot(t3[36:40,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in August")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+g9=ggplot(t3[41:45,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in September")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g10=ggplot(t3[46:50,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in October")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g11=ggplot(t3[51:55,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in November")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g12=ggplot(t3[56:60,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in December")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+g1 ###3.Maximum Sale Day Wise
+```{r,echo=F}
+require(quantmod)
+require(ggplot2)
+require(reshape2)
+require(scales)
+# We will facet by year ~ month, and each subgraph will show week-of-month versus weekday
+#the year is simple
+data$InvoiceDate=as.Date(data$InvoiceDate)
+data$InvoiceYear=as.numeric(format(data$InvoiceDate,'%Y'))
+
+#extract month
+library(lubridate)
+data$InvoiceMonth<-month(data$InvoiceDate)
+#Change the numbers into factors
+data$InvoiceMonth<-factor(data$InvoiceMonth,levels=as.character(1:12),labels=c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"),ordered=TRUE)
+# the monthweek part is a bit trickier 
+# first a factor which cuts the data into month chunks
+data$yearmonth<-as.yearmon(data$InvoiceDate)
+data$yearmonthf<-factor(data$yearmonth)
+
+# then find the "week of year" for each day
+data$week <- as.numeric(format(data$InvoiceDate,"%W"))
+# and now for each monthblock we normalize the week to start at 1 
+data<-plyr::ddply(data,.(yearmonthf),transform,monthweek=1+week-min(week))
+
+# the day of week is again easily found
+data$weekday = as.POSIXlt(data$InvoiceDate)$wday
+data$weekdayf<-factor(data$weekday,levels=0:6,labels=c("Sun","Mon","Tue","Wed","Thu","Fri","Sat"),ordered=TRUE)
+
+
+```
+```{r}
+#Converting InvoiceTime Column from Character to Time
+
+library(chron)
+data$InvoiceTime=chron(times. = data$InvoiceTime)
+
+```
+###Top Selling Item in a Month 
+```{r,echo=F}
+t2=data%>%dplyr::group_by(InvoiceMonth,Description)%>%dplyr::summarise(TotalSales=sum(Sales))%>%arrange(InvoiceMonth,-TotalSales)
+
+t3= head(filter(t2,InvoiceMonth=="Jan")%>%arrange(-TotalSales),5)%>%bind_rows(head(filter(t2,InvoiceMonth=="Feb")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Mar")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Apr")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="May")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Jun")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Jul")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Aug")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Sep")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Oct")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Nov")%>%arrange(-TotalSales),5))%>%bind_rows(head(filter(t2,InvoiceMonth=="Dec")))
+
+
+g1=ggplot(t3[1:5,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in January")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g2=ggplot(t3[6:10,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in February")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g3=ggplot(t3[11:15,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in March")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g4=ggplot(t3[16:20,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in April")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g5=ggplot(t3[21:25,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in May")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g6=ggplot(t3[26:30,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in June")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+g7=ggplot(t3[31:35,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in July")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g8=ggplot(t3[36:40,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in August")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+g9=ggplot(t3[41:45,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in September")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g10=ggplot(t3[46:50,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in October")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g11=ggplot(t3[51:55,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in November")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+
+g12=ggplot(t3[56:60,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in December")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set1")
+
+g1 + theme_bw()
+g2+ theme_bw()
+g3+ theme_bw()
+g4+ theme_bw()
+g5+ theme_bw()
+g6+ theme_bw()
+g7+ theme_bw()
+g8+ theme_bw()
+g9+ theme_bw()
+g10+ theme_bw()
+g11+ theme_bw()
+g12+ theme_bw()
+
+```
+
+#CountryWise Weekday wise Analysis
+
+```{r,echo=F,fig.width=12,fig.height=10}
+
+data$DateTime= retail$InvoiceDate
+t1 = data%>%dplyr::group_by(Country,WEEKDAYS=weekdayf,hour=format(DateTime,"%H"))%>%dplyr::summarise(NormalisedSales=(sum(Sales)-mean(Sales))/sd(Sales))
+t1[is.na(t1$NormalisedSales),]$NormalisedSales <-0
+t1[is.infinite(t1$NormalisedSales),]$NormalisedSales <-0
+t1=filter(t1,Country!="Unspecified")
+
+gg <- ggplot(t1, aes(x=hour, y=WEEKDAYS, fill=NormalisedSales))
+gg <- gg + geom_tile(color="white", size=0.1)
+gg <- gg + coord_equal()
+gg <- gg + facet_wrap(~Country, ncol=6)
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(axis.text=element_text(size=5))
+gg <- gg + theme(panel.border=element_blank())
+gg <- gg + theme(plot.title=element_text(hjust=0))
+gg <- gg + theme(strip.text=element_text(hjust=0))
+gg <- gg + theme(panel.spacing.x=unit(0.5, "cm"))
+gg <- gg + theme(panel.spacing.y=unit(0.5, "cm"))
+gg <- gg + theme(legend.title=element_text(size=6))
+gg <- gg + theme(legend.title.align=1)
+gg <- gg + theme(legend.text=element_text(size=6))
+gg <- gg + theme(legend.position="bottom")
+gg <- gg + theme(legend.key.size=unit(0.2, "cm"))
+gg <- gg + theme(legend.key.width=unit(1, "cm"))+scale_fill_distiller(palette = "Spectral",guide = "legend",direction = 1)
+
+gg
+```
+
+###Top revenue item in a year
+
+```{r,fig.width=12,fig.height=10}
+q1=data%>%dplyr::group_by(InvoiceYear,Description)%>%dplyr::summarise(TotalSales=sum(Sales))%>%dplyr::arrange(InvoiceYear,-TotalSales)
+q2= head(filter(q1,InvoiceYear==2010)%>%arrange(-TotalSales),5)%>%bind_rows(head(filter(q1,InvoiceYear==2011)%>%arrange(-TotalSales),5))
+
+gg1=ggplot(q2[1:5,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in 2010")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set2")
+
+
+gg2=ggplot(q2[6:10,],aes(x=reorder(Description,TotalSales),y=TotalSales))+geom_bar(stat="identity",aes(fill=Description))+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.ticks.y = element_blank(),axis.text.y = element_blank())+coord_polar(theta = "y") +labs(title="Top Selling Products in 2011")+xlab("") + ylab("")+
+    scale_fill_brewer(palette="Set2")
+
+gridExtra::grid.arrange(gg1,gg2,nrow=2)
+```
+
+# Total Sales Customer wise(Customers with high monetry value)
+- Rows with blank customer id is removed
+```{r,echo=F}
+
+data1=filter(data, is.na(data$CustomerID)==F)
+customer_wise_sales = data1 %>% group_by(CustomerID) %>% summarise(Total_Sales = sum(Sales)) %>% arrange(-Total_Sales)
+Top_10_customers = head(customer_wise_sales,10)
+
+ggplot(Top_10_customers,aes(x=reorder(CustomerID,-Total_Sales),y=Total_Sales))+geom_bar(stat="identity")+theme_bw()+labs(x="CUSTOMERID",y="Total_Sales",title="Customers with high monetory returns")+geom_text(aes(label=round(Total_Sales)),position=position_dodge(width=0.9),vjust=-0.25)+theme(axis.text.y=element_blank(),axis.ticks.y = element_blank())
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
